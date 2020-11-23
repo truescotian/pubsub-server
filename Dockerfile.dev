@@ -1,0 +1,23 @@
+FROM golang:latest
+
+# set environment path
+ENV PATH /go/bin:$PATH
+ARG github_access_token
+
+WORKDIR /go/src/github.com/TranquilityApp/websocket-api
+
+# copy the local package files to the container's workspace
+ADD . /go/src/github.com/TranquilityApp/websocket-api
+
+# allow private repo pull
+RUN git config --global url."https://$github_access_token:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+
+
+# Install the program
+RUN go get -v
+RUN go build
+
+ENV APP_ENV=local
+EXPOSE 3001
+
+CMD ["websocket-api"]

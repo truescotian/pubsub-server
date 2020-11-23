@@ -1,0 +1,15 @@
+FROM golang:latest
+
+ARG github_access_token
+WORKDIR /go/src/github.com/TranquilityApp/websocket-api
+ADD . /go/src/github.com/TranquilityApp/websocket-api
+
+ENV PATH ${PATH}:${GOPATH}/bin
+
+RUN git config --global url."https://$github_access_token:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+# Install all dependencies of the current project.
+RUN go get github.com/codegangsta/gin
+RUN go get -v
+
+EXPOSE 3001
+CMD gin -i -p 3031 -a 3001 run .

@@ -1,0 +1,12 @@
+#!/bin/bash
+echo "Step 1/4: Building new $1 image";
+  docker build --build-arg environment=$1 --build-arg github_access_token=${GITHUB_ACCESS_TOKEN} -t $1/websocket-api .
+  now=old_$(date +"%m_%d_%Y-%H.%M.%S");
+echo "Step 2/4: Taging old $1:latest image to $1:$now";
+  $(aws ecr get-login --no-include-email --region ca-central-1)
+  MANIFEST=$(aws ecr batch-get-image --repository-name $1/websocket-api --image-ids imageTag=latest --query 'images[].imageManifest' --output text --region ca-central-1)
+  aws ecr put-image --repository-name $1/websocket-api --image-tag $now --image-manifest "$MANIFEST" --region ca-central-1
+echo "Step 3/4: Taging new local image to $1:latest";
+  docker tag $1/websocket-api:latest 584009860414.dkr.ecr.ca-central-1.amazonaws.com/$1/websocket-api:latest
+echo "Step 4/4: Pushing new image";
+  docker push 584009860414.dkr.ecr.ca-central-1.amazonaws.com/$1/websocket-api:latest;

@@ -1,0 +1,29 @@
+{
+  "containerDefinitions": [
+    {
+      "name": "Websocket-api-Container",
+      "image": "<IMAGE1_NAME>",
+      "essential": true,
+      "cpu": 1024,
+      "memoryReservation": 500,
+      "portMappings": [
+        {
+          "protocol": "tcp",
+          "containerPort": 3000,
+          "hostPort": 80
+        }
+      ]
+    }
+  ],
+  "networkMode": "bridge",
+  "family": "Websocket-api",
+  "memory": "512",
+  "logConfiguration": {
+    "logDriver": "awslogs",
+    "options": {
+      "awslogs-group": "Websocket-api",
+      "awslogs-region": "ca-central-1",
+      "awslogs-stream-prefix": "WebsocketApi"
+    }
+  }
+}

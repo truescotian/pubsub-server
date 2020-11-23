@@ -1,0 +1,9 @@
+Version: 0.0
+Resources:
+  - TargetService:
+      Type: AWS::ECS::Service
+      Properties:
+        TaskDefinition: "arn:aws:ecs:ca-central-1:584009860414:task-definition/Websocket-api:28"
+        LoadBalancerInfo:
+          ContainerName: "Websocket-api-Container"
+          ContainerPort: 3001
