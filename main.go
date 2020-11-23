@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/TranquilityApp/backend-API/app/models"
 	"github.com/TranquilityApp/backend-API/app/shared/database"
 	config "github.com/TranquilityApp/config-manager"
 	"github.com/TranquilityApp/middleware"
@@ -22,27 +23,25 @@ import (
 	hub "github.com/truescotian/pubsub"
 )
 
-var (
-	app *hub.Application
-)
+var app *hub.Application
 
 func init() {
 	godotenv.Load()
 }
 
-// Establishes the application and HTTP server
 func main() {
 	database.ConnectV2(config.DB)
 	defer database.DB.Close()
 
 	app = hub.NewApp() // initializes app
 
-	startHTTP()
+	serve()
 }
 
-// Starts the HTTP server. This makes use of Auth0's JWT middleware
-// package, and registeres the routing endpoints.
-func startHTTP() {
+// serve starts the HTTP server. This uses Auth0's JWT middleware
+// to verify and validate the access_token.
+func serve() {
+	// run the broker
 	go app.Run()
 
 	// Establish CORS parameters
@@ -78,11 +77,10 @@ func startHTTP() {
 	)))
 }
 
-// Registers routes with mux.
+// registerRoutes registers routes with mux.
 func registerRoutes(jwtMiddleware *jwtmiddleware.JWTMiddleware) *mux.Router {
 	r := mux.NewRouter()
 
-	// GET - necessary for AWS to ping
 	r.Handle("/healthcheck", http.HandlerFunc(healthCheck)).Methods("GET")
 
 	r.Handle("/message", http.HandlerFunc(message)).Methods("POST")
@@ -105,23 +103,64 @@ func registerRoutes(jwtMiddleware *jwtmiddleware.JWTMiddleware) *mux.Router {
 	return r
 }
 
-// API endpoint used by AWS to check for server alive
+// healthCheck used by AWS to check for server alive
 func healthCheck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	return
 }
 
-// API endpoint to a subscribers Mailbox. This emits the message to a specific topic
+type chatMessage struct {
+	User         int    `json:"user"` // source user
+	Channel      string `json:"channel"`
+	Type         string `json:"type"`
+	SubType      string `json:"subType"`
+	ConnectionID int    `json:"connectionID"`
+	Text         string `json:"text"`
+}
+
+// message sends a MailMessage to a subscribers Mailbox. This emits the message to a specific topic
 // and message.
 func message(w http.ResponseWriter, r *http.Request) {
-	var m hub.Message
+	var chatMessage chatMessage
 
-	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&chatMessage); err != nil {
 		http.Error(w, fmt.Sprintf("Unable to decode message", err.Error()), http.StatusBadRequest)
 		return
 	}
 
-	app.Hub.Publish(m)
+	c, err := models.GetConnectionWithRecipients(chatMessage.ConnectionID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Unable to get connection", err.Error()), http.StatusBadRequest)
+		return
+	}
+
+	dbMsg := &models.Message{
+		ConnectionID:      chatMessage.ConnectionID,
+		Message:           chatMessage.Text,
+		SourceUser:        *c.SourceUser,
+		SourceUserID:      c.SourceUserID,
+		DestinationUserID: c.DestinationUserID,
+		Channel:           chatMessage.Channel,
+	}
+
+	if err := dbMsg.Save(); err != nil {
+		http.Error(w, fmt.Sprintf("Unable to save message. ", err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	// prep for ws
+	bytes, err := json.Marshal(chatMessage)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Unable to marshal chat message", err.Error()), http.StatusBadRequest)
+		return
+	}
+
+	pubMessage := hub.PublishMessage{
+		Topic:   chatMessage.Channel,
+		Payload: bytes,
+	}
+
+	app.Hub.Publish(pubMessage)
 
 	w.WriteHeader(http.StatusOK)
 	return
