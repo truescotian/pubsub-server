@@ -5,16 +5,20 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/TranquilityApp/backend-API/app/models"
 	"github.com/TranquilityApp/backend-API/app/shared/database"
 	config "github.com/TranquilityApp/config-manager"
 	"github.com/TranquilityApp/middleware"
+	"github.com/TranquilityApp/middleware/helpers"
 	jwtmiddleware "github.com/auth0/go-jwt-middleware"
 	"github.com/codegangsta/negroni"
 	"github.com/gorilla/mux"
@@ -34,8 +38,106 @@ func main() {
 	defer database.DB.Close()
 
 	app = hub.NewApp() // initializes app
+	app.OnSubscribe = func(s *hub.Subscription) {
+		if strings.HasPrefix(s.Topic, "notifications/") {
+			publishNotifications(s)
+		}
+	}
 
 	serve()
+}
+
+// publishNotifications publishes the initial notifications for a user.
+// Notifications published:
+// Experiments, Fear Ladder, Evidence Collection
+func publishNotifications(subscription *hub.Subscription) {
+	// Experiment Notifications
+	log.Printf("[DEBUG] Pushing notifications to user %s", subscription.Client.ID)
+
+	user, err := models.GetUserByAuthID("auth0|" + subscription.Client.ID)
+	if err != nil {
+
+	}
+
+	type payloadMessage struct {
+		Type    string `json:"type"`
+		SubType string `json:"subType"`
+		IDs     []uint `json:"ids"`
+	}
+
+	go func() {
+		ids, err := models.GetBehaviouralExperimentNotifications(user.ID)
+		if err != nil {
+			log.Println("[ERROR] Unable to get behavioural experiment notifications. Error: %v", err)
+			return
+		}
+		if len(ids) == 0 {
+			ids = make([]uint, 0)
+		}
+		payload := payloadMessage{
+			Type:    "notification",
+			SubType: "BE",
+			IDs:     ids,
+		}
+		bytes, err := json.Marshal(payload)
+		if err != nil {
+			log.Println("[ERROR] Unable to marshal notifications. Error: %v", err)
+		}
+		app.Hub.Publish(hub.PublishMessage{
+			Topic:   subscription.Topic,
+			Payload: bytes,
+		})
+	}()
+
+	go func() {
+		ladders, err := models.GetFearLadderNotifications(user.ID)
+		if err != nil {
+			log.Println("[ERROR] Unable to get fear ladder notifications. Error: %v", err)
+			return
+		}
+
+		ids := make([]uint, 0)
+		for _, ladder := range ladders {
+			ids = append(ids, ladder.LadderID)
+		}
+		payload := payloadMessage{
+			Type:    "notification",
+			SubType: "FL",
+			IDs:     ids,
+		}
+		bytes, err := json.Marshal(payload)
+		if err != nil {
+			log.Println("[ERROR] Unable to marshal notifications. Error: %v", err)
+		}
+		app.Hub.Publish(hub.PublishMessage{
+			Topic:   subscription.Topic,
+			Payload: bytes,
+		})
+	}()
+
+	go func() {
+		ids, err := models.GetEvidenceCollectionNotifications(user.ID)
+		if err != nil {
+			log.Println("[ERROR] Unable to get evidence collection notifications. Error: %v", err)
+		}
+		if len(ids) == 0 {
+			ids = make([]uint, 0)
+		}
+		payload := payloadMessage{
+			Type:    "notification",
+			SubType: "EC",
+			IDs:     ids,
+		}
+		bytes, err := json.Marshal(payload)
+		if err != nil {
+			log.Println("[ERROR] Unable to marshal notifications. Error: %v", err)
+		}
+		app.Hub.Publish(hub.PublishMessage{
+			Topic:   subscription.Topic,
+			Payload: bytes,
+		})
+	}()
+
 }
 
 // serve starts the HTTP server. This uses Auth0's JWT middleware
@@ -84,6 +186,7 @@ func registerRoutes(jwtMiddleware *jwtmiddleware.JWTMiddleware) *mux.Router {
 	r.Handle("/healthcheck", http.HandlerFunc(healthCheck)).Methods("GET")
 
 	r.Handle("/message", http.HandlerFunc(message)).Methods("POST")
+	r.Handle("/message/{id}", http.HandlerFunc(messageDelete)).Methods("DELETE")
 
 	msgRouter := mux.NewRouter().PathPrefix("/message").Subrouter()
 
@@ -97,10 +200,20 @@ func registerRoutes(jwtMiddleware *jwtmiddleware.JWTMiddleware) *mux.Router {
 	// query parameter within the request
 	r.Handle("/ws", negroni.New(
 		negroni.HandlerFunc(jwtMiddleware.HandlerWithNext),
+		negroni.HandlerFunc(AddUserID),
 		negroni.Wrap(app),
 	))
 
 	return r
+}
+
+// AddUserID is a middleware to add the AuthID of the connecting user from the Authorization
+// header.
+func AddUserID(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+	authID := helpers.ParseJWTUserIDFromUrl(r)
+	ctx := context.WithValue(r.Context(), middleware.AuthKey, authID)
+	r = r.WithContext(ctx)
+	next(w, r)
 }
 
 // healthCheck used by AWS to check for server alive
@@ -109,38 +222,47 @@ func healthCheck(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-type chatMessage struct {
-	User         int    `json:"user"` // source user
-	Channel      string `json:"channel"`
-	Type         string `json:"type"`
-	SubType      string `json:"subType"`
+type defaultProperties struct {
+	Channel string `json:"channel"`
+	Type    string `json:"type"`
+	SubType string `json:"subType"`
+}
+
+type request struct {
+	defaultProperties
+	User         string `json:"user"` // source user
 	ConnectionID int    `json:"connectionID"`
 	Text         string `json:"text"`
+}
+
+type pubMessage struct {
+	defaultProperties
+	ChannelMessage models.ChannelMessage `json:"message"`
 }
 
 // message sends a MailMessage to a subscribers Mailbox. This emits the message to a specific topic
 // and message.
 func message(w http.ResponseWriter, r *http.Request) {
-	var chatMessage chatMessage
+	var rBody request
 
-	if err := json.NewDecoder(r.Body).Decode(&chatMessage); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&rBody); err != nil {
 		http.Error(w, fmt.Sprintf("Unable to decode message", err.Error()), http.StatusBadRequest)
 		return
 	}
 
-	c, err := models.GetConnectionWithRecipients(chatMessage.ConnectionID)
+	c, err := models.GetConnectionWithRecipients(rBody.ConnectionID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Unable to get connection", err.Error()), http.StatusBadRequest)
 		return
 	}
 
 	dbMsg := &models.Message{
-		ConnectionID:      chatMessage.ConnectionID,
-		Message:           chatMessage.Text,
+		ConnectionID:      rBody.ConnectionID,
+		Message:           rBody.Text,
 		SourceUser:        *c.SourceUser,
 		SourceUserID:      c.SourceUserID,
 		DestinationUserID: c.DestinationUserID,
-		Channel:           chatMessage.Channel,
+		Channel:           rBody.Channel,
 	}
 
 	if err := dbMsg.Save(); err != nil {
@@ -148,15 +270,33 @@ func message(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cMsg := models.ChannelMessage{
+		ID:        int(dbMsg.ID),
+		CreatedAt: dbMsg.CreatedAt,
+		Message:   dbMsg.Message,
+		ReadBy:    dbMsg.ReadBy,
+		User:      rBody.User,
+	}
+
+	payload := pubMessage{
+		// populate embedded struct (promoted fields)
+		defaultProperties: defaultProperties{
+			Channel: rBody.Channel,
+			Type:    rBody.Type,
+			SubType: rBody.SubType,
+		},
+		ChannelMessage: cMsg,
+	}
+
 	// prep for ws
-	bytes, err := json.Marshal(chatMessage)
+	bytes, err := json.Marshal(payload)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Unable to marshal chat message", err.Error()), http.StatusBadRequest)
 		return
 	}
 
 	pubMessage := hub.PublishMessage{
-		Topic:   chatMessage.Channel,
+		Topic:   rBody.Channel,
 		Payload: bytes,
 	}
 
@@ -164,4 +304,58 @@ func message(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	return
+}
+
+// messageDelete deletes a message and notifies the broker.
+func messageDelete(w http.ResponseWriter, r *http.Request) {
+	var rBody request
+
+	if err := json.NewDecoder(r.Body).Decode(&rBody); err != nil {
+		http.Error(w, fmt.Sprintf("Unable to decode message", err.Error()), http.StatusBadRequest)
+		return
+	}
+
+	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Unable to convert ID to int. Error: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	err = models.DeleteMessage(id)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Unable to delete message. Error: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	type deleteMessage struct {
+		defaultProperties
+		ID int `json:"id"`
+	}
+
+	payload := deleteMessage{
+		defaultProperties: defaultProperties{
+			Channel: rBody.Channel,
+			Type:    "message",
+			SubType: "message_deleted",
+		},
+		ID: id,
+	}
+
+	// prep for ws
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Unable to marshal chat message", err.Error()), http.StatusBadRequest)
+		return
+	}
+
+	pubMessage := hub.PublishMessage{
+		Topic:   rBody.Channel,
+		Payload: bytes,
+	}
+
+	app.Hub.Publish(pubMessage)
+
+	w.WriteHeader(http.StatusOK)
+	return
+
 }
