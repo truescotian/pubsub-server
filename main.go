@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -187,12 +188,19 @@ func registerRoutes(jwtMiddleware *jwtmiddleware.JWTMiddleware) *mux.Router {
 
 	r.Handle("/message", http.HandlerFunc(message)).Methods("POST")
 	r.Handle("/message/{id}", http.HandlerFunc(messageDelete)).Methods("DELETE")
+	r.Handle("/publish", http.HandlerFunc(publish)).Methods("POST")
 
 	msgRouter := mux.NewRouter().PathPrefix("/message").Subrouter()
+	pubRouter := mux.NewRouter().PathPrefix("/publish").Subrouter()
 
 	r.PathPrefix("/message").Handler(negroni.New(
 		negroni.HandlerFunc(jwtMiddleware.HandlerWithNext),
 		negroni.Wrap(msgRouter),
+	))
+
+	r.PathPrefix("/publish").Handler(negroni.New(
+		negroni.HandlerFunc(jwtMiddleware.HandlerWithNext),
+		negroni.Wrap(pubRouter),
 	))
 
 	// GET - handles upgrading http/https connections to ws/wss.
@@ -238,6 +246,25 @@ type request struct {
 type pubMessage struct {
 	defaultProperties
 	ChannelMessage models.ChannelMessage `json:"message"`
+}
+
+func publish(w http.ResponseWriter, r *http.Request) {
+
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	pubMessage := hub.PublishMessage{
+		Topic:   r.URL.Query()["topic"][0],
+		Payload: body,
+	}
+
+	app.Hub.Publish(pubMessage)
+
+	w.WriteHeader(http.StatusOK)
+	return
 }
 
 // message sends a MailMessage to a subscribers Mailbox. This emits the message to a specific topic
