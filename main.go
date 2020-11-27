@@ -28,7 +28,7 @@ import (
 	hub "github.com/truescotian/pubsub"
 )
 
-var app *hub.Application
+var broker *hub.Broker
 
 func init() {
 	godotenv.Load()
@@ -38,8 +38,8 @@ func main() {
 	database.ConnectV2(config.DB)
 	defer database.DB.Close()
 
-	app = hub.NewApp() // initializes app
-	app.OnSubscribe = func(s *hub.Subscription) {
+	broker = hub.NewBroker() // initializes app
+	broker.OnSubscribe = func(s *hub.Subscription) {
 		if strings.HasPrefix(s.Topic, "notifications/") {
 			publishNotifications(s)
 		}
@@ -84,7 +84,7 @@ func publishNotifications(subscription *hub.Subscription) {
 		if err != nil {
 			log.Println("[ERROR] Unable to marshal notifications. Error: %v", err)
 		}
-		app.Hub.Publish(hub.PublishMessage{
+		broker.Hub.Publish(hub.PublishMessage{
 			Topic:   subscription.Topic,
 			Payload: bytes,
 		})
@@ -110,7 +110,7 @@ func publishNotifications(subscription *hub.Subscription) {
 		if err != nil {
 			log.Println("[ERROR] Unable to marshal notifications. Error: %v", err)
 		}
-		app.Hub.Publish(hub.PublishMessage{
+		broker.Hub.Publish(hub.PublishMessage{
 			Topic:   subscription.Topic,
 			Payload: bytes,
 		})
@@ -133,7 +133,7 @@ func publishNotifications(subscription *hub.Subscription) {
 		if err != nil {
 			log.Println("[ERROR] Unable to marshal notifications. Error: %v", err)
 		}
-		app.Hub.Publish(hub.PublishMessage{
+		broker.Hub.Publish(hub.PublishMessage{
 			Topic:   subscription.Topic,
 			Payload: bytes,
 		})
@@ -145,7 +145,7 @@ func publishNotifications(subscription *hub.Subscription) {
 // to verify and validate the access_token.
 func serve() {
 	// run the broker
-	go app.Run()
+	go broker.Run()
 
 	// Establish CORS parameters
 	c := cors.New(cors.Options{
@@ -209,7 +209,7 @@ func registerRoutes(jwtMiddleware *jwtmiddleware.JWTMiddleware) *mux.Router {
 	r.Handle("/ws", negroni.New(
 		negroni.HandlerFunc(jwtMiddleware.HandlerWithNext),
 		negroni.HandlerFunc(AddUserID),
-		negroni.Wrap(app),
+		negroni.Wrap(broker),
 	))
 
 	return r
@@ -261,7 +261,7 @@ func publish(w http.ResponseWriter, r *http.Request) {
 		Payload: body,
 	}
 
-	app.Hub.Publish(pubMessage)
+	broker.Hub.Publish(pubMessage)
 
 	w.WriteHeader(http.StatusOK)
 	return
@@ -327,7 +327,7 @@ func message(w http.ResponseWriter, r *http.Request) {
 		Payload: bytes,
 	}
 
-	app.Hub.Publish(pubMessage)
+	broker.Hub.Publish(pubMessage)
 
 	w.WriteHeader(http.StatusOK)
 	return
@@ -380,7 +380,7 @@ func messageDelete(w http.ResponseWriter, r *http.Request) {
 		Payload: bytes,
 	}
 
-	app.Hub.Publish(pubMessage)
+	broker.Hub.Publish(pubMessage)
 
 	w.WriteHeader(http.StatusOK)
 	return
