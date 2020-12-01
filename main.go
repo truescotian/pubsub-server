@@ -55,9 +55,10 @@ func publishNotifications(subscription *hub.Subscription) {
 	// Experiment Notifications
 	log.Printf("[DEBUG] Pushing notifications to user %s", subscription.Client.ID)
 
-	user, err := models.GetUserByAuthID("auth0|" + subscription.Client.ID)
+	user, err := models.GetUserByAuthID("auth0|" + strings.Split(subscription.Topic, "/")[1])
 	if err != nil {
-
+		log.Printf("[ERROR] Unable to get user %v ", err)
+		return
 	}
 
 	type payloadMessage struct {
