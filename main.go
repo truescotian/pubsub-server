@@ -64,7 +64,7 @@ func publishNotifications(subscription *hub.Subscription) {
 	type payloadMessage struct {
 		Type    string `json:"type"`
 		SubType string `json:"subType"`
-		IDs     []uint `json:"ids"`
+		IDs     []uint `json:"payload"`
 	}
 
 	go func() {
