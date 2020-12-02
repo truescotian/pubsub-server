@@ -30,6 +30,21 @@ import (
 
 var broker *hub.Broker
 
+var allowedOrigins = []string{"http://localhost:8080",
+	"http://localhost:8080",
+	"http://localhost:3002",
+	"http://192.168.2.16:3002",
+	"http://192.168.2.16:8080",
+	"http://192.168.0.14:3002",
+	"http://localhost:3000",
+	"https://dev.tranquility.app",
+	"https://api.dev.tranquility.app",
+	"https://staging.tranquility.app",
+	"https://api.staging.tranquility.app",
+	"https://portal.tranquility.app",
+	"https://api.tranquility.app",
+}
+
 func init() {
 	godotenv.Load()
 }
@@ -38,7 +53,7 @@ func main() {
 	database.ConnectV2(config.DB)
 	defer database.DB.Close()
 
-	broker = hub.NewBroker() // initializes app
+	broker = hub.NewBroker(allowedOrigins) // initializes app
 	broker.OnSubscribe = func(s *hub.Subscription) {
 		if strings.HasPrefix(s.Topic, "notifications/") {
 			publishNotifications(s)
@@ -150,20 +165,7 @@ func serve() {
 
 	// Establish CORS parameters
 	c := cors.New(cors.Options{
-		AllowedOrigins: []string{
-			"http://localhost:8080",
-			"http://localhost:3002",
-			"http://192.168.2.16:3002",
-			"http://192.168.2.16:8080",
-			"http://192.168.0.14:3002",
-			"http://localhost:3000",
-			"https://dev.tranquility.app",
-			"https://api.dev.tranquility.app",
-			"https://staging.tranquility.app",
-			"https://api.staging.tranquility.app",
-			"https://portal.tranquility.app",
-			"https://api.tranquility.app",
-		},
+		AllowedOrigins: allowedOrigins,
 		AllowedMethods: []string{"GET", "POST", "DELETE", "OPTIONS"},
 		AllowedHeaders: []string{"Content-Type", "Authorization"},
 	})
